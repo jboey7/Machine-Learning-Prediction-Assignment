@@ -1,0 +1,167 @@
+---
+title: "Prediction Assignment Write Up"
+author: "Jeffrey Boey"
+date: "January 29, 2017"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## 1.0 Overview
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
+
+## 2.0 Data Loading And Exploratory Analysis
+
+### A. Environment Setup
+```{r environment, echo=TRUE}
+library(knitr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(corrplot)
+library(gbm)
+library(munsell)
+set.seed(555)
+```
+
+### B. Data Cleaning
+Load the training dataset.
+```{r data, echo=TRUE}
+URLTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+URLTest  <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+FileTrain<-"pml-traininig.csv"
+FileTest<-"pml-testing.csv"
+
+if(!file.exists(FileTrain))
+{
+    download.file(URLTrain,destfile = FileTrain)
+}
+training <- read.csv(FileTrain)
+if(!file.exists(FileTest))
+{
+    download.file(URLTest,destfile = FileTest)
+}
+testing  <- read.csv(FileTest)
+```
+
+Create 2 partitions from the training dataset, Training set (70% of the data) and Test set (30% of the data). Training set will be used for modeling process whereas Test set will be used for validation purpose. Testing dataset will remain the same and will be used for quiz results generation.
+```{r partition, echo=TRUE}
+inTrain  <- createDataPartition(training$classe, p=0.7, list=FALSE)  
+
+TrainSet <- training[inTrain, ]  
+
+TestSet  <- training[-inTrain, ]
+dim(TrainSet)
+dim(TestSet)
+```
+
+There are 160 variables in these 2 datasets. We need to remove the NA, The Near Zero variance (NZV) variables and the ID variables.
+```{r clean, echo=TRUE}
+# Removing NZV variables
+NZV <- nearZeroVar(TrainSet)
+TrainSet <- TrainSet[, -NZV]
+TestSet  <- TestSet[, -NZV]
+dim(TestSet)
+dim(TrainSet)
+
+# Removing NA variables
+AllNA    <- sapply(TrainSet, function(x) mean(is.na(x))) > 0.95
+TrainSet <- TrainSet[, AllNA==FALSE]
+TestSet  <- TestSet[, AllNA==FALSE]
+dim(TestSet)
+dim(TrainSet)
+
+# Removing ID variables (columns 1 to 5)
+TrainSet <- TrainSet[, -(1:5)]
+TestSet  <- TestSet[, -(1:5)]
+dim(TrainSet)
+dim(TestSet)
+```
+
+As a result, there are 53 variables that are available for analysis.
+
+## 3.0 Prediction Model Buidling
+There are 3 main methods to model the regressions in the Train dataset.   
+* Random Forest  
+* Decision Tree  
+* Generalized Boosted Model (GBM)  
+
+A Confusion Matrix will be plotted after each analysis of the method in order to have a better visualization of the accuracy. The one with the highest accuracy when applied to the Test dataset will be used in the quiz predictions.
+
+### A. Random Forest
+Perform model fitting
+```{r ModelFit_randomForest, echo=TRUE}
+set.seed(555)
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+ModelFitRandForest <- train(classe ~ ., data=TrainSet, method="rf", trControl=controlRF)
+ModelFitRandForest$finalModel
+```
+
+Prediction on Test dataset
+```{r CF_RandForest, echo=TRUE}
+Predict_RandomForest <- predict(ModelFitRandForest, newdata=TestSet)
+ConfusionMatrix_RandomForest <- confusionMatrix(Predict_RandomForest, TestSet$classe)
+ConfusionMatrix_RandomForest
+```
+
+Plot the matrix result
+```{r RandForest, echo=TRUE}
+plot(ConfusionMatrix_RandomForest$table, col = ConfusionMatrix_RandomForest$byClass, main = paste("Random Forest - Accuracy =", round(ConfusionMatrix_RandomForest$overall['Accuracy'], 4)))
+```
+
+### B. Decision Tree
+Perform model fitting
+```{r ModelFit_decisiontree, echo=TRUE}
+set.seed(555)
+ModelFitDecisionTree <- rpart(classe ~ ., data=TrainSet, method="class")
+fancyRpartPlot(ModelFitDecisionTree)
+```
+
+Prediction on Test dataset
+```{r CF_DecisionTree, echo= TRUE}
+Predict_DecisionTree <- predict(ModelFitDecisionTree, newdata=TestSet, type="class")
+ConfusionMatrix_DecisionTree <- confusionMatrix(Predict_DecisionTree, TestSet$classe)
+ConfusionMatrix_DecisionTree
+```
+
+Plot the matrix result
+```{r DecisionTree, echo=TRUE}
+plot(ConfusionMatrix_DecisionTree$table, col = ConfusionMatrix_DecisionTree$byClass, main = paste("Decision Tree - Accuracy =", round(ConfusionMatrix_DecisionTree$overall['Accuracy'], 4)))
+```
+
+### C. Generalized Boosted Model (GBM)
+Perform model fitting
+```{r ModelFitting_GBM, echo=TRUE}
+set.seed(555)
+controlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+ModelFitGBM  <- train(classe ~ ., data=TrainSet, method = "gbm", trControl = controlGBM, verbose = FALSE)
+
+ModelFitGBM$finalModel
+```
+
+Predict on Test dataset
+```{r CF_GBM, echo=TRUE}
+Predict_GBM <- predict(ModelFitGBM, newdata=TestSet)
+ConfusionMatrix_GBM <- confusionMatrix(Predict_GBM, TestSet$classe)
+ConfusionMatrix_GBM
+```
+
+Plot the matrix result
+```{r GBM, echo=TRUE}
+plot(ConfusionMatrix_GBM$table, col = ConfusionMatrix_GBM$byClass, main = paste("GBM - Accuracy =", round(ConfusionMatrix_GBM$overall['Accuracy'], 4)))
+```
+
+## 4.0 Selection Of Model
+Here are the accuracy results of the 3 model:  
+* Random Forest: **0.9978**  
+* Decision Tree: **0.8272**  
+* GBM: **0.9884**  
+
+Random Forest has th highest accuracy, hence, it will be use to predict the 20 quiz results in the testing dataset.
+```{r final, echo=TRUE}
+Predict_Test <- predict(ModelFitRandForest, newdata=testing)
+Predict_Test
+```
